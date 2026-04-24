@@ -1,0 +1,48 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+.row:nth-child(2) {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.field, .fieldSmall {
+  display: flex;
+  flex-direction: column;
+}
+
+.splitHint {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.error {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(194, 106, 93, 0.12);
+  border: 1px solid rgba(194, 106, 93, 0.3);
+  color: var(--coral);
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .row, .row:nth-child(2) {
+    grid-template-columns: 1fr;
+  }
+}

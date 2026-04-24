@@ -1,0 +1,41 @@
+.page {
+  min-height: 70vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  padding: 40px 32px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.emoji {
+  font-size: 44px;
+  line-height: 1;
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 500;
+}
+
+.sub {
+  color: var(--muted);
+}
+
+.err {
+  color: var(--coral);
+  font-size: 14px;
+}

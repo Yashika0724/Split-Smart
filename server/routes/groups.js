@@ -1,0 +1,165 @@
+const db = require('../db');
+const { shortId, randomToken } = require('../auth');
+const { computeBalances, simplifyDebts } = require('../balances');
+
+const deleteMembership = db.prepare(
+  'DELETE FROM memberships WHERE group_id = ? AND user_id = ?'
+);
+const findUser = db.prepare(
+  'SELECT id, name FROM users WHERE id = ?'
+);
+
+const insertGroup = db.prepare(
+  'INSERT INTO groups (id, name, emoji, join_token, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+);
+const insertMembership = db.prepare(
+  'INSERT OR IGNORE INTO memberships (group_id, user_id, joined_at) VALUES (?, ?, ?)'
+);
+const listUserGroups = db.prepare(
+  `SELECT g.id, g.name, g.emoji, g.created_at
+     FROM groups g
+     JOIN memberships m ON m.group_id = g.id
+    WHERE m.user_id = ?
+    ORDER BY g.created_at DESC`
+);
+const findGroupById = db.prepare('SELECT * FROM groups WHERE id = ?');
+const findGroupByToken = db.prepare('SELECT * FROM groups WHERE join_token = ?');
+const listMembers = db.prepare(
+  `SELECT u.id, u.name, u.email, m.joined_at
+     FROM memberships m
+     JOIN users u ON u.id = m.user_id
+    WHERE m.group_id = ?
+    ORDER BY m.joined_at ASC`
+);
+const isMember = db.prepare(
+  'SELECT 1 FROM memberships WHERE group_id = ? AND user_id = ?'
+);
+
+function requireAuth(req, res) {
+  if (!req.user) {
+    res.json(401, { error: 'not authenticated' });
+    return false;
+  }
+  return true;
+}
+
+function requireMember(req, res, groupId) {
+  if (!isMember.get(groupId, req.user.id)) {
+    res.json(403, { error: 'not a member of this group' });
+    return false;
+  }
+  return true;
+}
+
+function register(router) {
+  router.get('/api/groups', (req, res) => {
+    if (!requireAuth(req, res)) return;
+    const groups = listUserGroups.all(req.user.id);
+    res.json(200, { groups });
+  });
+
+  router.post('/api/groups', (req, res) => {
+    if (!requireAuth(req, res)) return;
+    const { name, emoji } = req.body || {};
+    if (!name || !String(name).trim()) {
+      return res.json(400, { error: 'name is required' });
+    }
+    const id = shortId();
+    const joinToken = randomToken(8);
+    const create = db.transaction(() => {
+      insertGroup.run(
+        id,
+        String(name).trim(),
+        emoji || null,
+        joinToken,
+        req.user.id,
+        Date.now()
+      );
+      insertMembership.run(id, req.user.id, Date.now());
+    });
+    create();
+    res.json(200, {
+      group: {
+        id,
+        name: String(name).trim(),
+        emoji: emoji || null,
+        join_token: joinToken,
+      },
+    });
+  });
+
+  router.get('/api/groups/:id', (req, res) => {
+    if (!requireAuth(req, res)) return;
+    const group = findGroupById.get(req.params.id);
+    if (!group) return res.json(404, { error: 'group not found' });
+    if (!requireMember(req, res, group.id)) return;
+    const members = listMembers.all(group.id);
+    res.json(200, {
+      group: {
+        id: group.id,
+        name: group.name,
+        emoji: group.emoji,
+        join_token: group.join_token,
+        created_at: group.created_at,
+        created_by: group.created_by,
+      },
+      members,
+    });
+  });
+
+  router.get('/api/groups/:id/balances', (req, res) => {
+    if (!requireAuth(req, res)) return;
+    const group = findGroupById.get(req.params.id);
+    if (!group) return res.json(404, { error: 'group not found' });
+    if (!requireMember(req, res, group.id)) return;
+    const balances = computeBalances(group.id);
+    const payments = simplifyDebts(balances);
+    res.json(200, { balances, payments });
+  });
+
+  router.del('/api/groups/:id/members/:userId', (req, res) => {
+    if (!requireAuth(req, res)) return;
+    const group = findGroupById.get(req.params.id);
+    if (!group) return res.json(404, { error: 'group not found' });
+    if (!requireMember(req, res, group.id)) return;
+
+    const targetId = req.params.userId;
+    const target = findUser.get(targetId);
+    if (!target) return res.json(404, { error: 'user not found' });
+    if (!isMember.get(group.id, targetId)) {
+      return res.json(404, { error: 'user is not in this group' });
+    }
+
+    const isSelf = targetId === req.user.id;
+    const isCreator = req.user.id === group.created_by;
+    if (!isSelf && !isCreator) {
+      return res.json(403, { error: 'only the group creator can remove other members' });
+    }
+
+    const balances = computeBalances(group.id);
+    const balance = balances[targetId] || 0;
+    if (Math.abs(balance) > 0.01) {
+      return res.json(400, {
+        error: isSelf
+          ? 'settle your balance before leaving'
+          : `${target.name} still has an outstanding balance — settle up first`,
+        balance,
+      });
+    }
+
+    deleteMembership.run(group.id, targetId);
+    res.json(200, { ok: true });
+  });
+
+  router.post('/api/groups/join', (req, res) => {
+    if (!requireAuth(req, res)) return;
+    const { token } = req.body || {};
+    if (!token) return res.json(400, { error: 'token is required' });
+    const group = findGroupByToken.get(String(token));
+    if (!group) return res.json(404, { error: 'invalid join link' });
+    insertMembership.run(group.id, req.user.id, Date.now());
+    res.json(200, { group: { id: group.id, name: group.name, emoji: group.emoji } });
+  });
+}
+
+module.exports = { register, isMember, findGroupById, listMembers };

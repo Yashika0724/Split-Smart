@@ -1,0 +1,57 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toneRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.tone {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 14px;
+  background: var(--cream-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.tone:hover {
+  border-color: var(--forest);
+}
+.toneActive {
+  border-color: var(--forest);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 2px rgba(31, 61, 43, 0.12);
+}
+
+.toneLabel {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.toneBlurb {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+textarea.textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.error {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(194, 106, 93, 0.12);
+  border: 1px solid rgba(194, 106, 93, 0.3);
+  color: var(--coral);
+  font-size: 13px;
+}

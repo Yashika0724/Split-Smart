@@ -1,0 +1,23 @@
+.wordmark {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  display: inline-flex;
+  align-items: baseline;
+  color: var(--forest);
+}
+
+.s {
+  color: var(--terracotta);
+}
+
+.rest {
+  color: inherit;
+}
+
+.space {
+  display: inline-block;
+  width: 0.26em;
+}
