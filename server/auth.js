@@ -35,15 +35,15 @@ function shortId() {
   return crypto.randomBytes(8).toString('hex');
 }
 
-function createSession(userId) {
+async function createSession(userId) {
   const token = randomToken(32);
   const expiresAt = Date.now() + SESSION_TTL_MS;
-  insertSession.run(token, userId, expiresAt);
+  await insertSession.run(token, userId, expiresAt);
   return { token, expiresAt };
 }
 
-function destroySession(token) {
-  if (token) deleteSession.run(token);
+async function destroySession(token) {
+  if (token) await deleteSession.run(token);
 }
 
 function sessionCookie(token, maxAgeSec = 2592000) {
@@ -56,16 +56,16 @@ function clearCookie() {
   return `session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure}`;
 }
 
-function attachUser(req) {
+async function attachUser(req) {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.session;
   req.sessionToken = token || null;
   req.user = null;
   if (!token) return;
-  const row = selectSession.get(token);
+  const row = await selectSession.get(token);
   if (!row) return;
   if (row.expires_at < Date.now()) {
-    deleteSession.run(token);
+    await deleteSession.run(token);
     return;
   }
   req.user = { id: row.uid, email: row.email, name: row.name };

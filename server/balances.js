@@ -18,20 +18,26 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
-function computeBalances(groupId) {
-  const members = selectMembers.all(groupId).map((r) => r.id);
-  const balances = {};
-  for (const id of members) balances[id] = 0;
+async function computeBalances(groupId) {
+  const [memberRows, expenseRows, splitRows, settlementRows] = await Promise.all([
+    selectMembers.all(groupId),
+    selectExpenses.all(groupId),
+    selectSplits.all(groupId),
+    selectSettlements.all(groupId),
+  ]);
 
-  for (const e of selectExpenses.all(groupId)) {
+  const balances = {};
+  for (const r of memberRows) balances[r.id] = 0;
+
+  for (const e of expenseRows) {
     if (balances[e.paid_by] === undefined) balances[e.paid_by] = 0;
     balances[e.paid_by] += e.amount;
   }
-  for (const s of selectSplits.all(groupId)) {
+  for (const s of splitRows) {
     if (balances[s.user_id] === undefined) balances[s.user_id] = 0;
     balances[s.user_id] -= s.amount;
   }
-  for (const st of selectSettlements.all(groupId)) {
+  for (const st of settlementRows) {
     if (balances[st.from_user] === undefined) balances[st.from_user] = 0;
     if (balances[st.to_user] === undefined) balances[st.to_user] = 0;
     balances[st.from_user] += st.amount;

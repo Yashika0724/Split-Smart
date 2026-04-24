@@ -9,12 +9,6 @@ const findUser = db.prepare(
   'SELECT id, name FROM users WHERE id = ?'
 );
 
-const insertGroup = db.prepare(
-  'INSERT INTO groups (id, name, emoji, join_token, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-);
-const insertMembership = db.prepare(
-  'INSERT OR IGNORE INTO memberships (group_id, user_id, joined_at) VALUES (?, ?, ?)'
-);
 const listUserGroups = db.prepare(
   `SELECT g.id, g.name, g.emoji, g.created_at
      FROM groups g
@@ -43,8 +37,8 @@ function requireAuth(req, res) {
   return true;
 }
 
-function requireMember(req, res, groupId) {
-  if (!isMember.get(groupId, req.user.id)) {
+async function requireMember(req, res, groupId) {
+  if (!(await isMember.get(groupId, req.user.id))) {
     res.json(403, { error: 'not a member of this group' });
     return false;
   }
@@ -52,13 +46,13 @@ function requireMember(req, res, groupId) {
 }
 
 function register(router) {
-  router.get('/api/groups', (req, res) => {
+  router.get('/api/groups', async (req, res) => {
     if (!requireAuth(req, res)) return;
-    const groups = listUserGroups.all(req.user.id);
+    const groups = await listUserGroups.all(req.user.id);
     res.json(200, { groups });
   });
 
-  router.post('/api/groups', (req, res) => {
+  router.post('/api/groups', async (req, res) => {
     if (!requireAuth(req, res)) return;
     const { name, emoji } = req.body || {};
     if (!name || !String(name).trim()) {
@@ -66,34 +60,37 @@ function register(router) {
     }
     const id = shortId();
     const joinToken = randomToken(8);
-    const create = db.transaction(() => {
-      insertGroup.run(
-        id,
-        String(name).trim(),
-        emoji || null,
-        joinToken,
-        req.user.id,
-        Date.now()
+    const now = Date.now();
+    const cleanName = String(name).trim();
+    const cleanEmoji = emoji || null;
+
+    await db.transaction(async (run) => {
+      await run(
+        'INSERT INTO groups (id, name, emoji, join_token, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, cleanName, cleanEmoji, joinToken, req.user.id, now]
       );
-      insertMembership.run(id, req.user.id, Date.now());
+      await run(
+        'INSERT INTO memberships (group_id, user_id, joined_at) VALUES (?, ?, ?)',
+        [id, req.user.id, now]
+      );
     });
-    create();
+
     res.json(200, {
       group: {
         id,
-        name: String(name).trim(),
-        emoji: emoji || null,
+        name: cleanName,
+        emoji: cleanEmoji,
         join_token: joinToken,
       },
     });
   });
 
-  router.get('/api/groups/:id', (req, res) => {
+  router.get('/api/groups/:id', async (req, res) => {
     if (!requireAuth(req, res)) return;
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!requireMember(req, res, group.id)) return;
-    const members = listMembers.all(group.id);
+    if (!(await requireMember(req, res, group.id))) return;
+    const members = await listMembers.all(group.id);
     res.json(200, {
       group: {
         id: group.id,
@@ -107,26 +104,26 @@ function register(router) {
     });
   });
 
-  router.get('/api/groups/:id/balances', (req, res) => {
+  router.get('/api/groups/:id/balances', async (req, res) => {
     if (!requireAuth(req, res)) return;
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!requireMember(req, res, group.id)) return;
-    const balances = computeBalances(group.id);
+    if (!(await requireMember(req, res, group.id))) return;
+    const balances = await computeBalances(group.id);
     const payments = simplifyDebts(balances);
     res.json(200, { balances, payments });
   });
 
-  router.del('/api/groups/:id/members/:userId', (req, res) => {
+  router.del('/api/groups/:id/members/:userId', async (req, res) => {
     if (!requireAuth(req, res)) return;
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!requireMember(req, res, group.id)) return;
+    if (!(await requireMember(req, res, group.id))) return;
 
     const targetId = req.params.userId;
-    const target = findUser.get(targetId);
+    const target = await findUser.get(targetId);
     if (!target) return res.json(404, { error: 'user not found' });
-    if (!isMember.get(group.id, targetId)) {
+    if (!(await isMember.get(group.id, targetId))) {
       return res.json(404, { error: 'user is not in this group' });
     }
 
@@ -136,7 +133,7 @@ function register(router) {
       return res.json(403, { error: 'only the group creator can remove other members' });
     }
 
-    const balances = computeBalances(group.id);
+    const balances = await computeBalances(group.id);
     const balance = balances[targetId] || 0;
     if (Math.abs(balance) > 0.01) {
       return res.json(400, {
@@ -147,17 +144,20 @@ function register(router) {
       });
     }
 
-    deleteMembership.run(group.id, targetId);
+    await deleteMembership.run(group.id, targetId);
     res.json(200, { ok: true });
   });
 
-  router.post('/api/groups/join', (req, res) => {
+  router.post('/api/groups/join', async (req, res) => {
     if (!requireAuth(req, res)) return;
     const { token } = req.body || {};
     if (!token) return res.json(400, { error: 'token is required' });
-    const group = findGroupByToken.get(String(token));
+    const group = await findGroupByToken.get(String(token));
     if (!group) return res.json(404, { error: 'invalid join link' });
-    insertMembership.run(group.id, req.user.id, Date.now());
+    await db.query(
+      'INSERT INTO memberships (group_id, user_id, joined_at) VALUES (?, ?, ?) ON CONFLICT (group_id, user_id) DO NOTHING',
+      [group.id, req.user.id, Date.now()]
+    );
     res.json(200, { group: { id: group.id, name: group.name, emoji: group.emoji } });
   });
 }

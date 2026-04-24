@@ -1,8 +1,10 @@
-require('./db');
+const fs = require('fs');
+const path = require('path');
+const { pool } = require('./db');
 
-function migrate() {
-  // Schema is applied when db.js is loaded. This function exists for
-  // callers that want to force initialization at a known point.
+async function migrate() {
+  const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  await pool.query(schema);
 }
 
 module.exports = migrate;

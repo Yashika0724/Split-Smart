@@ -24,14 +24,14 @@ function register(router) {
       return res.json(400, { error: 'password must be at least 6 characters' });
     }
     const cleanEmail = String(email).trim().toLowerCase();
-    const existing = findByEmail.get(cleanEmail);
+    const existing = await findByEmail.get(cleanEmail);
     if (existing) return res.json(400, { error: 'email already in use' });
 
     const hash = await bcrypt.hash(password, 10);
     const id = shortId();
-    insertUser.run(id, cleanEmail, String(name).trim(), hash, Date.now());
+    await insertUser.run(id, cleanEmail, String(name).trim(), hash, Date.now());
 
-    const { token } = createSession(id);
+    const { token } = await createSession(id);
     res.setHeader('Set-Cookie', sessionCookie(token));
     res.json(200, { user: { id, email: cleanEmail, name: String(name).trim() } });
   });
@@ -41,19 +41,19 @@ function register(router) {
     if (!email || !password) {
       return res.json(400, { error: 'email and password are required' });
     }
-    const row = findByEmail.get(String(email).trim().toLowerCase());
+    const row = await findByEmail.get(String(email).trim().toLowerCase());
     if (!row) return res.json(401, { error: 'invalid credentials' });
 
     const ok = await bcrypt.compare(password, row.password_hash);
     if (!ok) return res.json(401, { error: 'invalid credentials' });
 
-    const { token } = createSession(row.id);
+    const { token } = await createSession(row.id);
     res.setHeader('Set-Cookie', sessionCookie(token));
     res.json(200, { user: publicUser(row) });
   });
 
-  router.post('/api/auth/logout', (req, res) => {
-    destroySession(req.sessionToken);
+  router.post('/api/auth/logout', async (req, res) => {
+    await destroySession(req.sessionToken);
     res.setHeader('Set-Cookie', clearCookie());
     res.json(200, { ok: true });
   });

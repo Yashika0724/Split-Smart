@@ -1,6 +1,10 @@
+
 node_modules
 client/dist
 server/data/data.db
 server/data/*.db
 .env
+.env.*
+!.env.example
 .DS_Store
+.vercel

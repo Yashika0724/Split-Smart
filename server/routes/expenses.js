@@ -2,24 +2,6 @@ const db = require('../db');
 const { shortId } = require('../auth');
 const { round2 } = require('../balances');
 
-const insertExpense = db.prepare(
-  `INSERT INTO expenses (id, group_id, description, amount, paid_by, category, date)
-   VALUES (?, ?, ?, ?, ?, ?, ?)`
-);
-const updateExpense = db.prepare(
-  `UPDATE expenses
-      SET description = ?, amount = ?, paid_by = ?, category = ?, date = ?
-    WHERE id = ? AND group_id = ?`
-);
-const deleteExpense = db.prepare(
-  'DELETE FROM expenses WHERE id = ? AND group_id = ?'
-);
-const insertSplit = db.prepare(
-  'INSERT INTO splits (expense_id, user_id, amount) VALUES (?, ?, ?)'
-);
-const deleteSplitsFor = db.prepare(
-  'DELETE FROM splits WHERE expense_id = ?'
-);
 const findExpense = db.prepare(
   'SELECT * FROM expenses WHERE id = ? AND group_id = ?'
 );
@@ -38,6 +20,12 @@ const isMember = db.prepare(
   'SELECT 1 FROM memberships WHERE group_id = ? AND user_id = ?'
 );
 
+const INSERT_EXPENSE = `INSERT INTO expenses (id, group_id, description, amount, paid_by, category, date) VALUES (?, ?, ?, ?, ?, ?, ?)`;
+const UPDATE_EXPENSE = `UPDATE expenses SET description = ?, amount = ?, paid_by = ?, category = ?, date = ? WHERE id = ? AND group_id = ?`;
+const DELETE_EXPENSE = `DELETE FROM expenses WHERE id = ? AND group_id = ?`;
+const INSERT_SPLIT = `INSERT INTO splits (expense_id, user_id, amount) VALUES (?, ?, ?)`;
+const DELETE_SPLITS_FOR = `DELETE FROM splits WHERE expense_id = ?`;
+
 const CATEGORIES = new Set([
   'food',
   'home',
@@ -50,7 +38,7 @@ const CATEGORIES = new Set([
   'other',
 ]);
 
-function validatePayload(body, groupId) {
+async function validatePayload(body, groupId) {
   const { description, amount, paidBy, category, date } = body || {};
   const amt = Number(amount);
   if (!description || !String(description).trim()) {
@@ -60,7 +48,7 @@ function validatePayload(body, groupId) {
     return { error: 'amount must be a positive number' };
   }
   if (!paidBy) return { error: 'paidBy is required' };
-  if (!isMember.get(groupId, paidBy)) {
+  if (!(await isMember.get(groupId, paidBy))) {
     return { error: 'paidBy must be a group member' };
   }
   const cat = category && CATEGORIES.has(category) ? category : 'other';
@@ -85,47 +73,49 @@ function buildShares(totalAmount, members) {
 }
 
 function register(router) {
-  router.get('/api/groups/:id/expenses', (req, res) => {
+  router.get('/api/groups/:id/expenses', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
-    res.json(200, { expenses: listExpenses.all(group.id) });
+    res.json(200, { expenses: await listExpenses.all(group.id) });
   });
 
-  router.post('/api/groups/:id/expenses', (req, res) => {
+  router.post('/api/groups/:id/expenses', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
 
-    const parsed = validatePayload(req.body, group.id);
+    const parsed = await validatePayload(req.body, group.id);
     if (parsed.error) return res.json(400, { error: parsed.error });
 
-    const members = listMembers.all(group.id).map((m) => m.user_id);
+    const memberRows = await listMembers.all(group.id);
+    const members = memberRows.map((m) => m.user_id);
     if (members.length === 0) {
       return res.json(400, { error: 'group has no members' });
     }
 
     const id = shortId();
     const shares = buildShares(parsed.amount, members);
-    const run = db.transaction(() => {
-      insertExpense.run(
+    await db.transaction(async (run) => {
+      await run(INSERT_EXPENSE, [
         id,
         group.id,
         parsed.description,
         parsed.amount,
         parsed.paidBy,
         parsed.category,
-        parsed.date
-      );
-      for (const s of shares) insertSplit.run(id, s.user_id, s.amount);
+        parsed.date,
+      ]);
+      for (const s of shares) {
+        await run(INSERT_SPLIT, [id, s.user_id, s.amount]);
+      }
     });
-    run();
 
     res.json(200, {
       expense: {
@@ -140,39 +130,41 @@ function register(router) {
     });
   });
 
-  router.put('/api/groups/:id/expenses/:expenseId', (req, res) => {
+  router.put('/api/groups/:id/expenses/:expenseId', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
-    const existing = findExpense.get(req.params.expenseId, group.id);
+    const existing = await findExpense.get(req.params.expenseId, group.id);
     if (!existing) return res.json(404, { error: 'expense not found' });
 
-    const parsed = validatePayload(req.body, group.id);
+    const parsed = await validatePayload(req.body, group.id);
     if (parsed.error) return res.json(400, { error: parsed.error });
 
-    const members = listMembers.all(group.id).map((m) => m.user_id);
+    const memberRows = await listMembers.all(group.id);
+    const members = memberRows.map((m) => m.user_id);
     if (members.length === 0) {
       return res.json(400, { error: 'group has no members' });
     }
     const shares = buildShares(parsed.amount, members);
 
-    const run = db.transaction(() => {
-      updateExpense.run(
+    await db.transaction(async (run) => {
+      await run(UPDATE_EXPENSE, [
         parsed.description,
         parsed.amount,
         parsed.paidBy,
         parsed.category,
         parsed.date,
         existing.id,
-        group.id
-      );
-      deleteSplitsFor.run(existing.id);
-      for (const s of shares) insertSplit.run(existing.id, s.user_id, s.amount);
+        group.id,
+      ]);
+      await run(DELETE_SPLITS_FOR, [existing.id]);
+      for (const s of shares) {
+        await run(INSERT_SPLIT, [existing.id, s.user_id, s.amount]);
+      }
     });
-    run();
 
     res.json(200, {
       expense: {
@@ -187,21 +179,20 @@ function register(router) {
     });
   });
 
-  router.del('/api/groups/:id/expenses/:expenseId', (req, res) => {
+  router.del('/api/groups/:id/expenses/:expenseId', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
-    const existing = findExpense.get(req.params.expenseId, group.id);
+    const existing = await findExpense.get(req.params.expenseId, group.id);
     if (!existing) return res.json(404, { error: 'expense not found' });
 
-    const run = db.transaction(() => {
-      deleteSplitsFor.run(existing.id);
-      deleteExpense.run(existing.id, group.id);
+    await db.transaction(async (run) => {
+      await run(DELETE_SPLITS_FOR, [existing.id]);
+      await run(DELETE_EXPENSE, [existing.id, group.id]);
     });
-    run();
 
     res.json(200, { ok: true });
   });

@@ -21,21 +21,21 @@ const isMember = db.prepare(
 const findGroupById = db.prepare('SELECT id FROM groups WHERE id = ?');
 
 function register(router) {
-  router.get('/api/groups/:id/settlements', (req, res) => {
+  router.get('/api/groups/:id/settlements', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
-    res.json(200, { settlements: listSettlements.all(group.id) });
+    res.json(200, { settlements: await listSettlements.all(group.id) });
   });
 
-  router.post('/api/groups/:id/settlements', (req, res) => {
+  router.post('/api/groups/:id/settlements', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
     const { fromUser, toUser, amount } = req.body || {};
@@ -49,19 +49,25 @@ function register(router) {
     if (!Number.isFinite(amt) || amt <= 0) {
       return res.json(400, { error: 'amount must be a positive number' });
     }
-    if (!isMember.get(group.id, fromUser) || !isMember.get(group.id, toUser)) {
+    const [fromOk, toOk] = await Promise.all([
+      isMember.get(group.id, fromUser),
+      isMember.get(group.id, toUser),
+    ]);
+    if (!fromOk || !toOk) {
       return res.json(400, { error: 'both users must be in the group' });
     }
     const id = shortId();
-    insertSettlement.run(id, group.id, fromUser, toUser, round2(amt), Date.now());
+    const now = Date.now();
+    const rounded = round2(amt);
+    await insertSettlement.run(id, group.id, fromUser, toUser, rounded, now);
     res.json(200, {
       settlement: {
         id,
         group_id: group.id,
         from_user: fromUser,
         to_user: toUser,
-        amount: round2(amt),
-        date: Date.now(),
+        amount: rounded,
+        date: now,
       },
     });
   });

@@ -31,18 +31,18 @@ const findGroupById = db.prepare('SELECT id FROM groups WHERE id = ?');
 const TONES = new Set(['gentle', 'casual', 'direct']);
 
 function register(router) {
-  router.post('/api/reminders', (req, res) => {
+  router.post('/api/reminders', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
     const { groupId, toUser, amount, tone, note } = req.body || {};
     if (!groupId || !toUser) {
       return res.json(400, { error: 'groupId and toUser are required' });
     }
-    const group = findGroupById.get(groupId);
+    const group = await findGroupById.get(groupId);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
-    if (!isMember.get(group.id, toUser)) {
+    if (!(await isMember.get(group.id, toUser))) {
       return res.json(400, { error: 'recipient must be in the group' });
     }
     if (toUser === req.user.id) {
@@ -54,7 +54,8 @@ function register(router) {
     }
     const t = TONES.has(tone) ? tone : 'casual';
     const id = shortId();
-    insertReminder.run(
+    const now = Date.now();
+    await insertReminder.run(
       id,
       group.id,
       req.user.id,
@@ -62,25 +63,25 @@ function register(router) {
       round2(amt),
       t,
       note ? String(note).trim() : null,
-      Date.now()
+      now
     );
-    res.json(200, { reminder: { id, sent_at: Date.now() } });
+    res.json(200, { reminder: { id, sent_at: now } });
   });
 
-  router.get('/api/reminders/inbox', (req, res) => {
+  router.get('/api/reminders/inbox', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const items = listInbox.all(req.user.id);
+    const items = await listInbox.all(req.user.id);
     res.json(200, { reminders: items });
   });
 
-  router.get('/api/groups/:id/reminders', (req, res) => {
+  router.get('/api/groups/:id/reminders', async (req, res) => {
     if (!req.user) return res.json(401, { error: 'not authenticated' });
-    const group = findGroupById.get(req.params.id);
+    const group = await findGroupById.get(req.params.id);
     if (!group) return res.json(404, { error: 'group not found' });
-    if (!isMember.get(group.id, req.user.id)) {
+    if (!(await isMember.get(group.id, req.user.id))) {
       return res.json(403, { error: 'not a member of this group' });
     }
-    res.json(200, { reminders: listGroupReminders.all(group.id) });
+    res.json(200, { reminders: await listGroupReminders.all(group.id) });
   });
 }
 

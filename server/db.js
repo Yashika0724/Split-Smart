@@ -1,19 +1,65 @@
-const path = require('path');
-const fs = require('fs');
-const Database = require('better-sqlite3');
+const { Pool, types } = require('pg');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'data.db');
+// BIGINT (OID 20) — return as JS Number. Safe here because every BIGINT column
+// stores Date.now()-style millisecond timestamps, well under 2^53.
+types.setTypeParser(20, (val) => (val === null ? null : parseInt(val, 10)));
 
-const dir = path.dirname(DB_PATH);
-if (!fs.existsSync(dir)) {
-  fs.mkdirSync(dir, { recursive: true });
+const connectionString =
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error(
+    'POSTGRES_URL is not set. Add a Vercel Postgres integration or set DATABASE_URL locally.'
+  );
 }
 
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const pool = new Pool({
+  connectionString,
+  max: 1,
+  ssl: { rejectUnauthorized: false },
+});
 
-const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-db.exec(schema);
+function toPg(text) {
+  let i = 0;
+  return text.replace(/\?/g, () => `$${++i}`);
+}
 
-module.exports = db;
+function prepare(text) {
+  const sql = toPg(text);
+  return {
+    async get(...params) {
+      const { rows } = await pool.query(sql, params);
+      return rows[0];
+    },
+    async all(...params) {
+      const { rows } = await pool.query(sql, params);
+      return rows;
+    },
+    async run(...params) {
+      await pool.query(sql, params);
+    },
+  };
+}
+
+async function transaction(fn) {
+  const client = await pool.connect();
+  const run = (text, params = []) => client.query(toPg(text), params);
+  try {
+    await client.query('BEGIN');
+    await fn(run);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function query(text, params = []) {
+  return pool.query(toPg(text), params);
+}
+
+module.exports = { pool, prepare, transaction, query };
