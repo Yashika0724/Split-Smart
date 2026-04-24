@@ -8,3 +8,4 @@ server/data/*.db
 !.env.example
 .DS_Store
 .vercel
+.env*.local
