@@ -3,7 +3,7 @@
   "buildCommand": "cd client && npm install && npm run build",
   "outputDirectory": "client/dist",
   "functions": {
-    "api/[[...slug]].js": {
+    "api/[...slug].js": {
       "includeFiles": "server/**"
     }
   },
